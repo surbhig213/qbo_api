@@ -2,6 +2,8 @@ require 'faraday'
 require 'faraday_middleware'
 require 'faraday/detailed_logger'
 require_relative 'middleware'
+require_relative 'custom_log_formatter'
+
 
 class QboApi
   module Connection
@@ -11,10 +13,14 @@ class QboApi
       Connection::AUTHORIZATION_MIDDLEWARES << strategy_name
     end
 
+    def intuit_tid
+      SecureRandom.uuid
+    end
+
     def authorized_json_connection(url, headers: nil)
       headers ||= {}
       headers['Accept'] ||= 'application/json' # required "we'll only accept JSON". Can be changed to any `+json` media type.
-      headers['Content-Type'] ||= 'application/json;charset=UTF-8' # required when request has a body, else harmless
+      headers['Content-Type'] ||= 'application/json;charset=UTF-8'
       build_connection(url, headers: headers) do |conn|
         add_authorization_middleware(conn)
         add_exception_middleware(conn)
@@ -50,7 +56,8 @@ class QboApi
     def build_connection(url, headers: nil)
       Faraday.new(url: url) { |conn|
         conn.headers.update(headers) if headers
-        conn.response :detailed_logger, QboApi.logger, LOG_TAG if QboApi.log
+        # conn.response :detailed_logger, QboApi.logger, LOG_TAG if QboApi.log
+        conn.response :logger, QboApi.logger, formatter: CustomLogFormatter if QboApi.log
         middleware.apply(conn) do
           yield conn if block_given?
         end
@@ -64,6 +71,7 @@ class QboApi
 
     def raw_request(method, conn:, path:, payload: nil, params: nil)
       path = finalize_path(path, method: method, params: params)
+      conn.headers["intuit_tid"] = intuit_tid
       conn.public_send(method) do |req|
         case method
         when :get, :delete
@@ -75,6 +83,10 @@ class QboApi
         end
       end
     end
+
+    # def send(*args)
+    #   self.connection.headers["intuit_tid"] = intuit_tid
+    # end
 
     def response(resp, entity: nil)
       data = parse_response_body(resp)
@@ -149,5 +161,7 @@ class QboApi
     include OAuth1
     require_relative 'connection/oauth2'
     include OAuth2
+    require_relative 'connection/i_am_client'
+    include IAmClient
   end
 end
